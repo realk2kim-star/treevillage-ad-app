@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-beige: #f4f0ec;
+  --color-brand-brown: #8d8174;
+  --color-brand-dark: #1f1d1d;
+  --color-brand-gray: #4a4a4a;
+  
+  /* Action Labels */
+  --color-action-off: #e74c3c;
+  --color-action-fix: #f39c12;
+  --color-action-scale: #27ae60;
+  --color-action-test: #3498db;
+}
+
+:root {
+  --background: #fdfbf9;
+  --foreground: #1f1d1d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #121212;
+    --foreground: #f4f0ec;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+.gallery-card {
+  @apply bg-white border border-[#eaeaea] shadow-sm rounded-lg p-6;
+}
+
+.dark .gallery-card {
+  @apply bg-[#1a1a1a] border-[#333333];
+}
