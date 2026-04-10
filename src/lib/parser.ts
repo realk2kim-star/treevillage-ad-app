@@ -42,7 +42,7 @@ export const parseCsvFile = async <T>(file: File): Promise<T[]> => {
           complete: (results) => {
             resolve(results.data as T[]);
           },
-          error: (err) => {
+          error: (err: { message?: string }) => {
             reject(new Error(err.message || 'CSV 파싱 에러'));
           }
         });
