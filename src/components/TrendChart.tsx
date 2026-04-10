@@ -1,7 +1,7 @@
 'use client';
 
 import { JoinedMetric } from '@/lib/types';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart, Bar } from 'recharts';
+import { ResponsiveContainer, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart, Bar } from 'recharts';
 
 export default function TrendChart({ data }: { data: JoinedMetric[] }) {
   // 날짜별로 그룹화하여 총 비용과 총 매출 계산
@@ -19,7 +19,7 @@ export default function TrendChart({ data }: { data: JoinedMetric[] }) {
 
   if (dailyData.length === 0) return null;
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }) => {
     if (active && payload && payload.length) {
       return (
         <div className="bg-white border border-[#eaeaea] p-4 shadow-lg rounded-lg">

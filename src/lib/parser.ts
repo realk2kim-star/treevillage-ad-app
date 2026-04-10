@@ -22,7 +22,7 @@ export const parseCsvFile = async <T>(file: File): Promise<T[]> => {
         try {
           const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
           decodedText = utf8Decoder.decode(buffer);
-        } catch (err) {
+        } catch (err: unknown) {
           const eucKrDecoder = new TextDecoder('euc-kr');
           decodedText = eucKrDecoder.decode(buffer);
         }
@@ -31,8 +31,7 @@ export const parseCsvFile = async <T>(file: File): Promise<T[]> => {
         let firstLineEnd = decodedText.indexOf('\n');
         if (firstLineEnd !== -1) {
           const firstLine = decodedText.substring(0, firstLineEnd);
-          // 첫 줄이 실제 헤더(데이터 컬럼)가 아닐 경우, 첫 줄만 깔끔하게 도려냄
-          if (!firstLine.includes('일별') && !firstLine.includes('캠페인') && !firstLine.includes('유형') && !firstLine.includes('전환')) {
+          if (firstLine.split(',').length < 5) {
             decodedText = decodedText.substring(firstLineEnd + 1);
           }
         }
@@ -47,8 +46,8 @@ export const parseCsvFile = async <T>(file: File): Promise<T[]> => {
             reject(new Error(err.message || 'CSV 파싱 에러'));
           }
         });
-      } catch (err) {
-        reject(err);
+      } catch (err: unknown) {
+        reject(err instanceof Error ? err : new Error('알 수 없는 오류'));
       }
     };
     

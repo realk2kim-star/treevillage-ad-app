@@ -29,8 +29,8 @@ export default function Home() {
         const parsed = await parseCsvFile<ConvRow>(file);
         setRawConversions(parsed);
       }
-    } catch (err: any) {
-      setErrorMsg(`파일 업로드 실패: ${err.message}`);
+    } catch (err: unknown) {
+      setErrorMsg(`파일 업로드 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`);
     } finally {
       setLoadingType(null);
     }
