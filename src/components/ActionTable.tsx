@@ -7,56 +7,85 @@ import { Info } from 'lucide-react';
 export default function ActionTable({ data }: { data: JoinedMetric[] }) {
   const [filter, setFilter] = useState<string>('ALL');
 
-  // 핵심 픽스: 날짜별로 쪼개진 수천 줄의 데이터를 '캠페인-그룹-매체' 단위 1줄로 통폐합(Aggregation)
+  // 날짜별 분리 데이터를 '캠페인-그룹-매체' 단위로 재통합
   const aggregatedMap = data.reduce((acc, row) => {
     const key = `${row.campaignType}|${row.groupType}|${row.campaign}|${row.group}|${row.media}`;
     if (!acc[key]) {
       acc[key] = {
         ...row,
-        cost: 0, clicks: 0, impressions: 0, purchaseDirectSales: 0, purchaseTotalSales: 0, cartDirectSales: 0, purchaseDirectCount: 0
+        cost: 0, 
+        clicks: 0, 
+        impressions: 0, 
+        purchaseDirectSales: 0, 
+        purchaseIndirectSales: 0,
+        purchaseTotalSales: 0, 
+        purchaseDirectCount: 0,
+        purchaseIndirectCount: 0,
+        cartDirectSales: 0,
+        cartIndirectSales: 0
       };
     }
     acc[key].cost += row.cost;
     acc[key].clicks += row.clicks;
     acc[key].impressions += row.impressions;
     acc[key].purchaseDirectSales += row.purchaseDirectSales;
+    acc[key].purchaseIndirectSales += row.purchaseIndirectSales;
     acc[key].purchaseTotalSales += row.purchaseTotalSales;
-    acc[key].cartDirectSales += row.cartDirectSales;
     acc[key].purchaseDirectCount += row.purchaseDirectCount;
+    acc[key].purchaseIndirectCount += row.purchaseIndirectCount;
+    acc[key].cartDirectSales += row.cartDirectSales;
+    acc[key].cartIndirectSales += row.cartIndirectSales;
     return acc;
   }, {} as Record<string, JoinedMetric>);
 
+  const totalGlobalCost = Object.values(aggregatedMap).reduce((acc, curr) => acc + curr.cost, 0);
+
   let aggregatedData = Object.values(aggregatedMap).map(row => {
-    // 합산된 기준으로 누수 지수 및 룰셋 라벨링 재평가! (이게 진짜 액션 라벨링)
+    // 💡 vNext: ROAS는 오직 구매 기준 
     const directRoas = row.cost > 0 ? (row.purchaseDirectSales / row.cost) * 100 : 0;
-    const cartRatio = (row.purchaseDirectSales + row.cartDirectSales) > 0 
-      ? (row.cartDirectSales / (row.purchaseDirectSales + row.cartDirectSales)) * 100 : 0;
     
-    // 타겟 ROAS 300 기준으로 누수계산
+    // 타겟 ROAS 300 기준으로 복합 누수점수 계산 (비용점유 x ROAS격차 x 원시누수액)
     const expectedRoas = 300; 
     const roasRatio = directRoas > 0 ? expectedRoas / directRoas : 2; 
     const leakageIndex = row.cost > 0 && directRoas < expectedRoas ? (row.cost * roasRatio) : 0; 
+    const costShare = totalGlobalCost > 0 ? row.cost / totalGlobalCost : 0;
     
+    let leakageScore = 0;
     let actionLabel: JoinedMetric['actionLabel'] = '대기';
-    if (row.cost >= 100000 && directRoas < 30) actionLabel = 'OFF(차단)';
-    else if (row.cost >= 30000 && row.purchaseDirectSales === 0) actionLabel = 'OFF(즉시)';
-    else if (row.cost >= 50000 && directRoas > 30 && directRoas < 60) actionLabel = 'FIX(정교화)';
-    else if (row.cost > 0 && directRoas >= 300) actionLabel = 'SCALE(증액)';
-    else if (row.cost > 0) actionLabel = 'TEST/관찰';
+    
+    if (row.cost >= 100000 && directRoas < 30) {
+      actionLabel = 'OFF(차단)';
+      leakageScore = costShare * roasRatio * leakageIndex;
+    }
+    else if (row.cost >= 30000 && row.purchaseDirectSales === 0) {
+      actionLabel = 'OFF(즉시)';
+      leakageScore = costShare * 2.5 * row.cost;
+    }
+    else if (row.cost >= 50000 && directRoas > 30 && directRoas < 60) {
+      actionLabel = 'FIX(정교화)';
+      leakageScore = costShare * (expectedRoas / Math.max(directRoas, 1)) * leakageIndex * 0.5;
+    }
+    else if (row.cost > 0 && directRoas >= 300) {
+      actionLabel = 'SCALE(증액)';
+      leakageScore = 0;
+    }
+    else if (row.cost > 0) {
+      actionLabel = 'TEST/관찰';
+      leakageScore = costShare * leakageIndex * 0.1;
+    }
 
-    return { ...row, directRoas, cartRatio, leakageIndex, actionLabel };
+    return { ...row, directRoas, leakageIndex, leakageScore, actionLabel };
   });
 
-  // 비용이 0이거나 의미없는 데이터 라인 제거 후, 손실이 가장 큰 순서(누수지수 내림차순) 정렬 
+  // 누수점수(leakageScore) 내림차순 정렬 
   let sortedData = aggregatedData
     .filter(row => row.cost > 0)
-    .sort((a, b) => b.leakageIndex - a.leakageIndex);
+    .sort((a, b) => b.leakageScore - a.leakageScore);
 
   if (filter !== 'ALL') {
     sortedData = sortedData.filter(d => d.actionLabel.includes(filter));
   }
 
-  // 글로벌 CSS 변수 기반 컬러 매핑
   const getLabelColor = (label: string) => {
     if (label.includes('OFF(즉시)')) return 'bg-action-off text-white opacity-100';
     if (label.includes('OFF(차단)')) return 'bg-action-off text-white opacity-80';
@@ -68,11 +97,10 @@ export default function ActionTable({ data }: { data: JoinedMetric[] }) {
 
   return (
     <div className="flex flex-col gap-6" id="action-plan">
-      {/* 룰셋 및 액션 안내사항 가이드 박스 */}
       <div className="bg-[#faf9f8] p-5 rounded-lg mb-2 text-sm text-[#4a4a4a] border border-[#eaeaea]">
         <h4 className="font-semibold text-[#1f1d1d] mb-4 flex items-center gap-2">
           <Info className="w-4 h-4 text-brand-brown" /> 
-          룰셋 및 라벨링 안내 가이드
+          룰셋 및 라벨링 안내 가이드 (vNext)
         </h4>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-3 text-[13px] leading-relaxed">
           <div className="flex gap-2">
@@ -89,20 +117,14 @@ export default function ActionTable({ data }: { data: JoinedMetric[] }) {
           </div>
           <div className="flex gap-2">
             <strong className="text-action-fix w-20 shrink-0">FIX(정교화)</strong>
-            <span>비용은 지속 발생하나 결제 연결이 저조(ROAS 60% 미만)합니다. 키워드, 랜딩페이지 <span className="font-bold text-black">수정 조치</span>가 필요합니다.</span>
-          </div>
-          <div className="flex gap-2 lg:col-span-2 mt-1 pt-3 border-t border-[#eaeaea]">
-            <strong className="text-action-test w-20 shrink-0">TEST/관찰</strong>
-            <span className="text-[#8d8174]">아직 유의미한 클릭이나 누적 소진액이 발생하지 않은 상태입니다. 자동 관찰 모드로 계속 지켜봅니다.</span>
+            <span>비용 지속 발생 및 단가 과다(ROAS 60% 미만). 키워드, 랜딩페이지 <span className="font-bold text-black">수정 조치</span>가 필요합니다.</span>
           </div>
         </div>
       </div>
 
       <div className="flex gap-3 text-sm">
         {['ALL', 'OFF(즉시)', 'OFF(차단)', 'SCALE(증액)', 'FIX(정교화)', 'TEST/관찰'].map(type => {
-          // 간략한 라벨 버튼 파싱
           const query = type.split('(')[0].split('/')[0];
-          
           return (
             <button 
               key={type} 
@@ -116,51 +138,58 @@ export default function ActionTable({ data }: { data: JoinedMetric[] }) {
       </div>
       
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse min-w-[800px]">
+        <table className="w-full text-left border-collapse min-w-[1000px]">
           <thead>
             <tr className="border-b-2 border-[#1f1d1d] text-[#1f1d1d] text-sm tracking-wide">
-              <th className="font-semibold p-4">권장 액션</th>
               <th className="font-semibold p-4">분류 / 매체</th>
               <th className="font-semibold p-4">캠페인 / 광고그룹</th>
-              <th className="font-semibold p-4 text-right">총지출액</th>
-              <th className="font-semibold p-4 text-right">직접매출액</th>
-              <th className="font-semibold p-4 text-right">진성 ROAS</th>
-              <th className="font-semibold p-4 text-right">누수 우선순위</th>
+              <th className="font-semibold p-4 text-right">비용(원)</th>
+              <th className="font-semibold p-4 text-right">클릭(건)</th>
+              <th className="font-semibold p-4 text-right">구매직접매출(원)</th>
+              <th className="font-semibold p-4 text-right">구매직접ROAS(%)</th>
+              <th className="font-semibold p-4 text-right">구매전환수(직접)</th>
+              <th className="font-semibold p-4 text-right">직접비중(%)</th>
+              <th className="font-semibold p-4 text-center whitespace-nowrap">권장액션</th>
             </tr>
           </thead>
           <tbody>
-            {sortedData.slice(0, 70).map((row) => (
-              <tr key={row.id} className="border-b border-[#eaeaea] hover:bg-[#faf9f8] transition-colors group">
-                <td className="p-4">
-                  <span className={`px-3 py-1.5 text-xs font-bold tracking-wider rounded ${getLabelColor(row.actionLabel)}`}>
-                    {row.actionLabel}
-                  </span>
-                </td>
-                <td className="p-4 text-sm">
-                  <div className="text-[#1f1d1d] font-medium">{row.media || '-'}</div>
-                  <div className="text-[#8d8174] text-xs mt-1">{row.campaignType} <span className="opacity-50">/</span> {row.groupType}</div>
-                </td>
-                <td className="p-4 text-sm max-w-[200px] truncate" title={`${row.campaign} / ${row.group}`}>
-                  <div className="text-[#1f1d1d] truncate">{row.campaign}</div>
-                  <div className="text-[#8d8174] truncate mt-1">{row.group}</div>
-                </td>
-                <td className="p-4 text-right text-sm">{row.cost.toLocaleString()} <span className="text-xs text-[#8d8174]">원</span></td>
-                <td className="p-4 text-right text-sm">{row.purchaseDirectSales.toLocaleString()} <span className="text-xs text-[#8d8174]">원</span></td>
-                <td className="p-4 text-right">
-                  <span className={`font-bold ${row.directRoas < 50 ? 'text-action-off' : row.directRoas > 200 ? 'text-action-scale' : 'text-[#1f1d1d]'}`}>
-                    {row.directRoas.toFixed(1)}%
-                  </span>
-                </td>
-                <td className="p-4 text-right font-medium text-[#1f1d1d]">{Math.round(row.leakageIndex).toLocaleString()}</td>
-              </tr>
-            ))}
+            {sortedData.slice(0, 100).map((row) => {
+              const directShare = row.purchaseTotalSales > 0 ? (row.purchaseDirectSales / row.purchaseTotalSales) * 100 : 0;
+              return (
+                <tr key={row.id} className="border-b border-[#eaeaea] hover:bg-[#faf9f8] transition-colors group">
+                  <td className="p-4 text-sm">
+                    <div className="text-[#1f1d1d] font-medium">{row.media || '-'}</div>
+                    <div className="text-[#8d8174] text-xs mt-1">{row.campaignType} <span className="opacity-50">/</span> {row.groupType}</div>
+                  </td>
+                  <td className="p-4 text-sm max-w-[200px] truncate" title={`${row.campaign} / ${row.group}`}>
+                    <div className="text-[#1f1d1d] truncate">{row.campaign}</div>
+                    <div className="text-[#8d8174] truncate mt-1">{row.group}</div>
+                  </td>
+                  <td className="p-4 text-right text-sm">{row.cost.toLocaleString()}</td>
+                  <td className="p-4 text-right text-sm">{row.clicks.toLocaleString()}</td>
+                  <td className="p-4 text-right text-sm text-[#ea580c] font-medium">{row.purchaseDirectSales.toLocaleString()}</td>
+                  <td className="p-4 text-right">
+                    <span className={`font-bold ${row.directRoas < 50 ? 'text-action-off' : row.directRoas >= 300 ? 'text-action-scale' : 'text-[#1f1d1d]'}`}>
+                      {row.directRoas.toFixed(1)}%
+                    </span>
+                  </td>
+                  <td className="p-4 text-right text-sm text-[#1f1d1d] font-medium">{row.purchaseDirectCount.toLocaleString()}</td>
+                  <td className="p-4 text-right text-sm font-light text-[#8d8174]">{directShare.toFixed(1)}%</td>
+                  <td className="p-4 text-center whitespace-nowrap">
+                    <span className={`px-3 py-1.5 text-[11px] font-bold tracking-wider rounded ${getLabelColor(row.actionLabel)}`}>
+                      {row.actionLabel}
+                    </span>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
         
         {sortedData.length === 0 && (
           <div className="p-20 flex flex-col items-center justify-center text-center text-[#8d8174] bg-[#faf9f8] mt-4 rounded border border-dashed border-[#eaeaea]">
             <span className="text-lg mb-2">데이터가 없습니다</span>
-            <span className="text-sm">선택한 액션 탭에 부합하는 광고 자산이 없거나 비용이 0원입니다.</span>
+            <span className="text-sm">조건에 부합하는 광고 자산이 없습니다.</span>
           </div>
         )}
       </div>
